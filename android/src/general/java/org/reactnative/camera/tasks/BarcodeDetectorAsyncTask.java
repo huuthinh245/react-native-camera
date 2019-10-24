@@ -19,6 +19,10 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
   private byte[] mImageData;
   private int mWidth;
   private int mHeight;
+  private int mCropWidth;
+  private int mCropHeight;
+  private int mCropX;
+  private int mCropY;
   private int mRotation;
   private RNBarcodeDetector mBarcodeDetector;
   private BarcodeDetectorAsyncTaskDelegate mDelegate;
@@ -40,7 +44,11 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
       int viewWidth,
       int viewHeight,
       int viewPaddingLeft,
-      int viewPaddingTop
+      int viewPaddingTop,
+      int cropWidth,
+      int cropHeight,
+      int cropX,
+      int cropY
   ) {
     mImageData = imageData;
     mWidth = width;
@@ -53,6 +61,10 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
     mScaleY = (double) (viewHeight) / (mImageDimensions.getHeight() * density);
     mPaddingLeft = viewPaddingLeft;
     mPaddingTop = viewPaddingTop;
+    mCropWidth = cropWidth;
+    mCropHeight = cropHeight;
+    mCropX = cropX;
+    mCropY = cropY;
   }
 
   @Override

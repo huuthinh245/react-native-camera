@@ -16,6 +16,7 @@ import com.google.android.cameraview.CameraView;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.DecodeHintType;
 import com.google.zxing.MultiFormatReader;
+import com.google.zxing.PlanarYUVLuminanceSource;
 import com.google.zxing.Result;
 import org.reactnative.barcodedetector.RNBarcodeDetector;
 import org.reactnative.camera.tasks.*;
@@ -37,6 +38,10 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
   private Promise mVideoRecordedPromise;
   private List<String> mBarCodeTypes = null;
   private Boolean mPlaySoundOnCapture = false;
+
+  private boolean mShouldCropScanArea = false;
+  private double mCropScanAreaPercentageWidth = 0;
+  private double mCropScanAreaPercentageHeight = 0;
 
   private boolean mIsPaused = false;
   private boolean mIsNew = true;
@@ -135,6 +140,30 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
             return;
         }
 
+        int cropWidth = width;
+        int cropHeight = height;
+        int cropX = 0;
+        int cropY = 0;
+
+        if(mShouldCropScanArea) {
+          // The image bytes array is always in landscape mode (rotation 0)
+          // We crop based on the portrait mode, so here the percentages are inverted (width/height)
+          cropWidth = (int)(width * mCropScanAreaPercentageHeight);
+          cropHeight = (int)(height * mCropScanAreaPercentageWidth);
+          cropX = (width/2)-(cropWidth/2);
+          cropY = (height/2)-(cropHeight/2);
+          data = (new PlanarYUVLuminanceSource(
+                  data, // byte[] yuvData
+                  width, // int dataWidth
+                  height, // int dataHeight
+                  cropX, // int left
+                  cropY, // int top
+                  cropWidth, // int width
+                  cropHeight, // int height
+                  false // boolean reverseHorizontal
+          )).getMatrix();
+        }
+
         if (willCallBarCodeTask) {
           barCodeScannerTaskLock = true;
           BarCodeScannerAsyncTaskDelegate delegate = (BarCodeScannerAsyncTaskDelegate) cameraView;
@@ -162,7 +191,8 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
             }
           }
           BarcodeDetectorAsyncTaskDelegate delegate = (BarcodeDetectorAsyncTaskDelegate) cameraView;
-          new BarcodeDetectorAsyncTask(delegate, mGoogleBarcodeDetector, data, width, height, correctRotation, getResources().getDisplayMetrics().density, getFacing(), getWidth(), getHeight(), mPaddingX, mPaddingY).execute();
+          new BarcodeDetectorAsyncTask(delegate, mGoogleBarcodeDetector, data, width, height, correctRotation, getResources().getDisplayMetrics().density, getFacing(), getWidth(), getHeight(), mPaddingX, mPaddingY, cropWidth, cropHeight, cropX, cropY).execute();
+          //new BarcodeDetectorAsyncTask(delegate, mGoogleBarcodeDetector, data, width, height, correctRotation, getResources().getDisplayMetrics().density, getFacing(), getWidth(), getHeight(), mPaddingX, mPaddingY).execute();
         }
 
         if (willCallTextTask) {
@@ -517,5 +547,17 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
     } else {
       return true;
     }
+  }
+
+  public void setShouldCropScanArea(boolean shouldCropScanArea) {
+    this.mShouldCropScanArea = shouldCropScanArea;
+  }
+
+  public void setCropScanAreaPercentageWidth(double cropScanAreaPercentageWidth) {
+    this.mCropScanAreaPercentageWidth = cropScanAreaPercentageWidth;
+  }
+
+  public void setCropScanAreaPercentageHeight(double cropScanAreaPercentageHeight) {
+    this.mCropScanAreaPercentageHeight = cropScanAreaPercentageHeight;
   }
 }

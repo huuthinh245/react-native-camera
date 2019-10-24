@@ -198,4 +198,18 @@ public class CameraViewManager extends ViewGroupManager<RNCameraView> {
   public void setTextRecognizing(RNCameraView view, boolean textRecognizerEnabled) {
     view.setShouldRecognizeText(textRecognizerEnabled);
   }
+  @ReactProp(name = "cropScanAreaEnabled")
+  public void setCropScanAreaEnabled(RNCameraView view, boolean cropScanAreaEnabled) {
+    view.setShouldCropScanArea(cropScanAreaEnabled);
+  }
+
+  @ReactProp(name = "cropScanAreaSize")
+  public void setCropScanAreaSize(RNCameraView view, ReadableArray cropScanAreaSize) {
+    if (cropScanAreaSize == null || cropScanAreaSize.size() != 2) {
+      return;
+    }
+
+    view.setCropScanAreaPercentageWidth(cropScanAreaSize.getDouble(0));
+    view.setCropScanAreaPercentageHeight(cropScanAreaSize.getDouble(1));
+  }
 }
