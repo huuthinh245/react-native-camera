@@ -33,26 +33,30 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
   private int mPaddingTop;
 
   public BarcodeDetectorAsyncTask(
-      BarcodeDetectorAsyncTaskDelegate delegate,
-      RNBarcodeDetector barcodeDetector,
-      byte[] imageData,
-      int width,
-      int height,
-      int rotation,
-      float density,
-      int facing,
-      int viewWidth,
-      int viewHeight,
-      int viewPaddingLeft,
-      int viewPaddingTop,
-      int cropWidth,
-      int cropHeight,
-      int cropX,
-      int cropY
+          BarcodeDetectorAsyncTaskDelegate delegate,
+          RNBarcodeDetector barcodeDetector,
+          byte[] imageData,
+          int width,
+          int height,
+          int rotation,
+          float density,
+          int facing,
+          int viewWidth,
+          int viewHeight,
+          int viewPaddingLeft,
+          int viewPaddingTop,
+          int cropWidth,
+          int cropHeight,
+          int cropX,
+          int cropY
   ) {
     mImageData = imageData;
     mWidth = width;
     mHeight = height;
+    mCropWidth = cropWidth;
+    mCropHeight = cropHeight;
+    mCropX = cropX;
+    mCropY = cropY;
     mRotation = rotation;
     mDelegate = delegate;
     mBarcodeDetector = barcodeDetector;
@@ -61,10 +65,6 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
     mScaleY = (double) (viewHeight) / (mImageDimensions.getHeight() * density);
     mPaddingLeft = viewPaddingLeft;
     mPaddingTop = viewPaddingTop;
-    mCropWidth = cropWidth;
-    mCropHeight = cropHeight;
-    mCropX = cropX;
-    mCropY = cropY;
   }
 
   @Override
@@ -73,7 +73,7 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
       return null;
     }
 
-    RNFrame frame = RNFrameFactory.buildFrame(mImageData, mWidth, mHeight, mRotation);
+    RNFrame frame = RNFrameFactory.buildFrame(mImageData, mCropWidth, mCropHeight, mRotation);
     return mBarcodeDetector.detect(frame);
   }
 
@@ -109,9 +109,17 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
   }
 
   private WritableMap processBounds(Rect frame) {
+    int cropX = mCropX;
+    int cropY = mCropY;
+    // Crop x/y are relative to landscape mode, we have to invert them for portrait mode
+    if(mRotation == 90 || mRotation == -90) {
+      cropX = mCropY;
+      cropY = mCropX;
+    }
+
     WritableMap origin = Arguments.createMap();
-    int x = frame.left;
-    int y = frame.top;
+    int x = frame.left + cropX;
+    int y = frame.top + cropY;
 
     if (frame.left < mWidth / 2) {
       x = x + mPaddingLeft / 2;
