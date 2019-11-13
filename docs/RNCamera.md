@@ -378,9 +378,18 @@ Event contains the following fields:
 - `cameraStatus` - one of the [CameraStatus](#status) values
 - `recordAudioPermissionStatus` - one of the [RecordAudioPermissionStatus](#recordAudioPermissionStatus) values
 
-### `Android` `onPictureTaken`
+### `iOS` `onAudioInterrupted`
 
-Function to be called when native code emit onPictureTaken event, when camera has taken a picture.
+iOS only. Function to be called when the camera audio session is interrupted or fails to start for any reason (e.g., in use or not authorized). For example, this might happen due to another app taking exclusive control over the microphone (e.g., a phone call) if `captureAudio={true}`. When this happens, any active audio input will be temporarily disabled and cause a flicker on the preview screen. This will fire any time an attempt to connect the audio device fails. Use this to update your UI to indicate that audio recording is not currently possible.
+
+### `iOS` `onAudioConnected`
+
+iOS only. Function to be called when the camera audio session is connected. This will be fired the first time the camera is mounted with `captureAudio={true}`, and any time the audio device connection is established. Note that this event might not always fire after an interruption due to iOS' behavior. For example, if the audio was already interrupted before the camera was mounted, this event will only fire once a recording is attempted.
+
+
+### `onPictureTaken`
+
+Function to be called when native code emit onPictureTaken event, when camera has taken a picture, but before all extra processing happens. This can be useful to allow the UI to take other pictures while the processing of the current picture is still taking place.
 
 ### Bar Code Related props
 
