@@ -245,8 +245,11 @@ type PropsType = typeof View.props & {
   focusDepth?: number,
   type?: number | string,
   onCameraReady?: Function,
+  onAudioInterrupted?: Function,
+  onAudioConnected?: Function,
   onStatusChange?: Function,
   onBarCodeRead?: Function,
+  onPictureTaken?: Function,
   onPictureSaved?: Function,
   onGoogleVisionBarcodesDetected?: ({ barcodes: Array<TrackedBarcodeFeature> }) => void,
   onSubjectAreaChanged?: ({ nativeEvent: { prevPoint: {| x: number, y: number |} } }) => void,
@@ -381,8 +384,11 @@ export default class Camera extends React.Component<PropsType, StateType> {
     focusDepth: PropTypes.number,
     onMountError: PropTypes.func,
     onCameraReady: PropTypes.func,
+    onAudioInterrupted: PropTypes.func,
+    onAudioConnected: PropTypes.func,
     onStatusChange: PropTypes.func,
     onBarCodeRead: PropTypes.func,
+    onPictureTaken: PropTypes.func,
     onPictureSaved: PropTypes.func,
     onGoogleVisionBarcodesDetected: PropTypes.func,
     onFacesDetected: PropTypes.func,
@@ -613,6 +619,18 @@ export default class Camera extends React.Component<PropsType, StateType> {
     }
   };
 
+  _onAudioInterrupted = () => {
+    if (this.props.onAudioInterrupted) {
+      this.props.onAudioInterrupted();
+    }
+  };
+
+  _onAudioConnected = () => {
+    if (this.props.onAudioConnected) {
+      this.props.onAudioConnected();
+    }
+  };
+
   _onStatusChange = () => {
     if (this.props.onStatusChange) {
       this.props.onStatusChange({
@@ -775,6 +793,8 @@ export default class Camera extends React.Component<PropsType, StateType> {
             ref={this._setReference}
             onMountError={this._onMountError}
             onCameraReady={this._onCameraReady}
+            onAudioInterrupted={this._onAudioInterrupted}
+            onAudioConnected={this._onAudioConnected}
             onGoogleVisionBarcodesDetected={this._onObjectDetected(
               this.props.onGoogleVisionBarcodesDetected,
             )}
@@ -845,6 +865,8 @@ const RNCamera = requireNativeComponent('RNCamera', Camera, {
     onBarCodeRead: true,
     onGoogleVisionBarcodesDetected: true,
     onCameraReady: true,
+    onAudioInterrupted: true,
+    onAudioConnected: true,
     onPictureSaved: true,
     onFaceDetected: true,
     onLayout: true,

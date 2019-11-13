@@ -6,12 +6,12 @@
 #import <React/RCTLog.h>
 #import <React/RCTUtils.h>
 #import <React/UIView+React.h>
+#import <MobileCoreServices/MobileCoreServices.h>
 #import  "RNSensorOrientationChecker.h"
 @interface RNCamera ()
 
 @property (nonatomic, weak) RCTBridge *bridge;
 @property (nonatomic,strong) RNSensorOrientationChecker * sensorOrientationChecker;
-@property (nonatomic, assign, getter=isSessionPaused) BOOL paused;
 
 @property (nonatomic, strong) RCTPromiseResolveBlock videoRecordedResolve;
 @property (nonatomic, strong) RCTPromiseRejectBlock videoRecordedReject;
@@ -20,11 +20,14 @@
 @property (nonatomic, strong) id barcodeDetector;
 
 @property (nonatomic, copy) RCTDirectEventBlock onCameraReady;
+@property (nonatomic, copy) RCTDirectEventBlock onAudioInterrupted;
+@property (nonatomic, copy) RCTDirectEventBlock onAudioConnected;
 @property (nonatomic, copy) RCTDirectEventBlock onMountError;
 @property (nonatomic, copy) RCTDirectEventBlock onBarCodeRead;
 @property (nonatomic, copy) RCTDirectEventBlock onTextRecognized;
 @property (nonatomic, copy) RCTDirectEventBlock onFacesDetected;
 @property (nonatomic, copy) RCTDirectEventBlock onGoogleVisionBarcodesDetected;
+@property (nonatomic, copy) RCTDirectEventBlock onPictureTaken;
 @property (nonatomic, copy) RCTDirectEventBlock onPictureSaved;
 @property (nonatomic, assign) BOOL finishedReadingText;
 @property (nonatomic, assign) BOOL finishedDetectingFace;
@@ -44,6 +47,7 @@
 static NSDictionary *defaultFaceDetectorOptions = nil;
 
 BOOL _recordRequested = NO;
+BOOL _sessionInterrupted = NO;
 
 
 - (id)initWithBridge:(RCTBridge *)bridge
@@ -68,7 +72,6 @@ BOOL _recordRequested = NO;
         self.previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
         self.previewLayer.needsDisplayOnBoundsChange = YES;
 #endif
-        self.paused = NO;
         self.rectOfInterest = CGRectMake(0, 0, 1.0, 1.0);
         self.autoFocus = -1;
         self.exposure = -1;
@@ -76,17 +79,14 @@ BOOL _recordRequested = NO;
         self.cameraId = nil;
         self.isFocusedOnPoint = NO;
         self.isExposedOnPoint = NO;
-
-        [self changePreviewOrientation:[UIApplication sharedApplication].statusBarOrientation];
-
+        _recordRequested = NO;
+        _sessionInterrupted = NO;
 
         // we will do other initialization after
         // the view is loaded.
         // This is to prevent code if the view is unused as react
         // might create multiple instances of it.
         // and we need to also add/remove event listeners.
-
-
 
 
     }
@@ -111,6 +111,13 @@ BOOL _recordRequested = NO;
 {
     if (_onBarCodeRead) {
         _onBarCodeRead(event);
+    }
+}
+
+- (void)onPictureTaken:(NSDictionary *)event
+{
+    if (_onPictureTaken) {
+        _onPictureTaken(event);
     }
 }
 
@@ -167,19 +174,17 @@ BOOL _recordRequested = NO;
              name:UIApplicationDidChangeStatusBarOrientationNotification
            object:nil];
 
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                 selector:@selector(bridgeDidBackground:)
-                     name:UIApplicationDidEnterBackgroundNotification
-                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(sessionWasInterrupted:) name:AVCaptureSessionWasInterruptedNotification object:self.session];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(sessionDidStartRunning:) name:AVCaptureSessionDidStartRunningNotification object:self.session];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(sessionRuntimeError:) name:AVCaptureSessionRuntimeErrorNotification object:self.session];
 
         [[NSNotificationCenter defaultCenter] addObserver:self
-                 selector:@selector(bridgeDidForeground:)
-                     name:UIApplicationWillEnterForegroundNotification
-                   object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                 selector:@selector(audioDidInterrupted:)
-                     name:AVAudioSessionInterruptionNotification
-                   object:nil];
+            selector:@selector(audioDidInterrupted:)
+            name:AVAudioSessionInterruptionNotification
+            object:[AVAudioSession sharedInstance]];
+
 
         // this is not needed since RN will update our type value
         // after mount to set the camera's default, and that will already
@@ -190,11 +195,13 @@ BOOL _recordRequested = NO;
     else{
         [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidChangeStatusBarOrientationNotification object:nil];
 
-        [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureSessionWasInterruptedNotification object:self.session];
 
-        [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillEnterForegroundNotification object:nil];
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureSessionDidStartRunningNotification object:self.session];
 
-        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVAudioSessionInterruptionNotification object:nil];
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureSessionRuntimeErrorNotification object:self.session];
+
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVAudioSessionInterruptionNotification object:[AVAudioSession sharedInstance]];
 
         [self stopSession];
     }
@@ -254,7 +261,7 @@ BOOL _recordRequested = NO;
 {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
     NSError *error = nil;
-    
+
     if(device == nil){
         return;
     }
@@ -310,10 +317,41 @@ BOOL _recordRequested = NO;
     [device unlockForConfiguration];
 }
 
+// Function to cleanup focus listeners and variables on device
+// change. This is required since "defocusing" might not be
+// possible on the new device, and our device reference will be
+// different
+- (void)cleanupFocus:(AVCaptureDevice*) previousDevice {
+
+    self.isFocusedOnPoint = NO;
+    self.isExposedOnPoint = NO;
+
+    // cleanup listeners if we had any
+    if(previousDevice != nil){
+
+        // remove event listener
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureDeviceSubjectAreaDidChangeNotification object:previousDevice];
+
+        // cleanup device flags
+        NSError *error = nil;
+        if (![previousDevice lockForConfiguration:&error]) {
+            if (error) {
+                RCTLogError(@"%s: %@", __func__, error);
+            }
+            return;
+        }
+
+        previousDevice.subjectAreaChangeMonitoringEnabled = NO;
+
+        [previousDevice unlockForConfiguration];
+
+    }
+}
+
 - (void)defocusPointOfInterest
 {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
-    
+
 
     if (self.isFocusedOnPoint) {
 
@@ -322,7 +360,7 @@ BOOL _recordRequested = NO;
         if(device == nil){
             return;
         }
-        
+
         device.subjectAreaChangeMonitoringEnabled = NO;
         [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureDeviceSubjectAreaDidChangeNotification object:device];
 
@@ -344,7 +382,7 @@ BOOL _recordRequested = NO;
 
     if(self.isExposedOnPoint){
         self.isExposedOnPoint = NO;
-        
+
         if(device == nil){
             return;
         }
@@ -364,7 +402,7 @@ BOOL _recordRequested = NO;
 
     if(self.isExposedOnPoint){
         self.isExposedOnPoint = NO;
-        
+
         if(device == nil){
             return;
         }
@@ -382,7 +420,7 @@ BOOL _recordRequested = NO;
 {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
     NSError *error = nil;
-    
+
     if(device == nil){
         return;
     }
@@ -461,7 +499,7 @@ BOOL _recordRequested = NO;
 {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
     NSError *error = nil;
-    
+
     if(device == nil){
         return;
     }
@@ -516,7 +554,7 @@ BOOL _recordRequested = NO;
 - (void)updateZoom {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
     NSError *error = nil;
-    
+
     if(device == nil){
         return;
     }
@@ -546,7 +584,7 @@ BOOL _recordRequested = NO;
 {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
     NSError *error = nil;
-    
+
     if(device == nil){
         return;
     }
@@ -603,7 +641,7 @@ BOOL _recordRequested = NO;
 {
     AVCaptureDevice *device = [self.videoCaptureDeviceInput device];
     NSError *error = nil;
-    
+
     if(device == nil){
         return;
     }
@@ -658,6 +696,19 @@ BOOL _recordRequested = NO;
     }
 }
 
+
+- (void)updateCaptureAudio
+{
+    dispatch_async(self.sessionQueue, ^{
+        if(self.captureAudio){
+            [self initializeAudioCaptureSessionInput];
+        }
+        else{
+            [self removeAudioCaptureSessionInput];
+        }
+    });
+}
+
 - (void)takePictureWithOrientation:(NSDictionary *)options resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject{
     [self.sensorOrientationChecker getDeviceOrientationWithBlock:^(UIInterfaceOrientation orientation) {
         NSMutableDictionary *tmpOptions = [options mutableCopy];
@@ -669,10 +720,11 @@ BOOL _recordRequested = NO;
         [self takePicture:tmpOptions resolve:resolve reject:reject];
     }];
 }
+
 - (void)takePicture:(NSDictionary *)options resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
     // if video device is not set, reject
-    if(self.videoCaptureDeviceInput == nil){
+    if(self.videoCaptureDeviceInput == nil || !self.session.isRunning){
         reject(@"E_IMAGE_CAPTURE_FAILED", @"Camera is not ready.", nil);
         return;
     }
@@ -689,6 +741,7 @@ BOOL _recordRequested = NO;
     @try {
         [self.stillImageOutput captureStillImageAsynchronouslyFromConnection:connection completionHandler: ^(CMSampleBufferRef imageSampleBuffer, NSError *error) {
             if (imageSampleBuffer && !error) {
+
                 if ([options[@"pauseAfterCapture"] boolValue]) {
                     [[self.previewLayer connection] setEnabled:NO];
                 }
@@ -697,10 +750,19 @@ BOOL _recordRequested = NO;
                 if (useFastMode) {
                     resolve(nil);
                 }
-                NSData *imageData = [AVCaptureStillImageOutput jpegStillImageNSDataRepresentation:imageSampleBuffer];
 
+                [self onPictureTaken:@{}];
+
+
+                // get JPEG image data
+                NSData *imageData = [AVCaptureStillImageOutput jpegStillImageNSDataRepresentation:imageSampleBuffer];
                 UIImage *takenImage = [UIImage imageWithData:imageData];
 
+
+                // Adjust/crop image based on preview dimensions
+                // TODO: This seems needed because iOS does not allow
+                // for aspect ratio settings, so this is the best we can get
+                // to mimic android's behaviour.
                 CGImageRef takenCGImage = takenImage.CGImage;
                 CGSize previewSize;
                 if (UIInterfaceOrientationIsPortrait([[UIApplication sharedApplication] statusBarOrientation])) {
@@ -712,64 +774,95 @@ BOOL _recordRequested = NO;
                 CGRect croppedSize = AVMakeRectWithAspectRatioInsideRect(previewSize, cropRect);
                 takenImage = [RNImageUtils cropImage:takenImage toRect:croppedSize];
 
+                // apply other image settings
+                bool resetOrientation = NO;
                 if ([options[@"mirrorImage"] boolValue]) {
                     takenImage = [RNImageUtils mirrorImage:takenImage];
                 }
                 if ([options[@"forceUpOrientation"] boolValue]) {
                     takenImage = [RNImageUtils forceUpOrientation:takenImage];
+                    resetOrientation = YES;
                 }
-
                 if ([options[@"width"] integerValue]) {
                     takenImage = [RNImageUtils scaleImage:takenImage toWidth:[options[@"width"] integerValue]];
+                    resetOrientation = YES;
                 }
 
-                NSMutableDictionary *response = [[NSMutableDictionary alloc] init];
+                // get image metadata so we can re-add it later
+                // make it mutable since we need to adjust quality/compression
+                CFDictionaryRef metaDict = CMCopyDictionaryOfAttachments(NULL, imageSampleBuffer, kCMAttachmentMode_ShouldPropagate);
+                NSMutableDictionary *metadata = [(__bridge NSDictionary*)metaDict mutableCopy];
+
+
+                // Get final JPEG image and set compression
                 float quality = [options[@"quality"] floatValue];
-                NSData *takenImageData = UIImageJPEGRepresentation(takenImage, quality);
-                NSString *path = [RNFileSystem generatePathInDirectory:[[RNFileSystem cacheDirectoryPath] stringByAppendingPathComponent:@"Camera"] withExtension:@".jpg"];
-                if (![options[@"doNotSave"] boolValue]) {
-                    response[@"uri"] = [RNImageUtils writeImage:takenImageData toPath:path];
-                }
-                response[@"width"] = @(takenImage.size.width);
-                response[@"height"] = @(takenImage.size.height);
+                [metadata setObject:@(quality) forKey:(__bridge NSString *)kCGImageDestinationLossyCompressionQuality];
 
-                if ([options[@"base64"] boolValue]) {
-                    response[@"base64"] = [takenImageData base64EncodedStringWithOptions:0];
+                // Reset exif orientation if we need to due to image changes
+                // that already rotate the image.
+                // Other dimension attributes will be set automatically
+                // regardless of what we have on our metadata dict
+                if (resetOrientation){
+                    metadata[(NSString*)kCGImagePropertyOrientation] = @(1);
                 }
 
-                if ([options[@"exif"] boolValue]) {
-                    int imageRotation;
-                    switch (takenImage.imageOrientation) {
-                        case UIImageOrientationLeft:
-                        case UIImageOrientationRightMirrored:
-                            imageRotation = 90;
-                            break;
-                        case UIImageOrientationRight:
-                        case UIImageOrientationLeftMirrored:
-                            imageRotation = -90;
-                            break;
-                        case UIImageOrientationDown:
-                        case UIImageOrientationDownMirrored:
-                            imageRotation = 180;
-                            break;
-                        case UIImageOrientationUpMirrored:
-                        default:
-                            imageRotation = 0;
-                            break;
+
+                // get our final image data with added metadata
+                // idea taken from: https://stackoverflow.com/questions/9006759/how-to-write-exif-metadata-to-an-image-not-the-camera-roll-just-a-uiimage-or-j/9091472
+                NSMutableData * destData = [NSMutableData data];
+
+                CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)destData, kUTTypeJPEG, 1, NULL);
+
+                CGImageDestinationAddImage(destination, takenImage.CGImage, (__bridge CFDictionaryRef) metadata);
+
+
+                // write final image data with metadata to our destination
+                if (CGImageDestinationFinalize(destination)){
+
+                    NSMutableDictionary *response = [[NSMutableDictionary alloc] init];
+
+                    NSString *path = [RNFileSystem generatePathInDirectory:[[RNFileSystem cacheDirectoryPath] stringByAppendingPathComponent:@"Camera"] withExtension:@".jpg"];
+
+                    if (![options[@"doNotSave"] boolValue]) {
+                        response[@"uri"] = [RNImageUtils writeImage:destData toPath:path];
                     }
-                    [RNImageUtils updatePhotoMetadata:imageSampleBuffer withAdditionalData:@{ @"Orientation": @(imageRotation) } inResponse:response]; // TODO
+                    response[@"width"] = @(takenImage.size.width);
+                    response[@"height"] = @(takenImage.size.height);
+
+                    if ([options[@"base64"] boolValue]) {
+                        response[@"base64"] = [destData base64EncodedStringWithOptions:0];
+                    }
+
+                    if ([options[@"exif"] boolValue]) {
+                        response[@"exif"] = metadata;
+
+                        // No longer needed since we always get the photo metadata now
+                        //[RNImageUtils updatePhotoMetadata:imageSampleBuffer withAdditionalData:@{ @"Orientation": @(imageRotation) } inResponse:response]; // TODO
+                    }
+
+                    response[@"pictureOrientation"] = @([self.orientation integerValue]);
+                    response[@"deviceOrientation"] = @([self.deviceOrientation integerValue]);
+                    self.orientation = nil;
+                    self.deviceOrientation = nil;
+
+                    if (useFastMode) {
+                        [self onPictureSaved:@{@"data": response, @"id": options[@"id"]}];
+                    } else {
+                        resolve(response);
+                    }
+                }
+                else{
+                    reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be saved", error);
                 }
 
-                response[@"pictureOrientation"] = @([self.orientation integerValue]);
-                response[@"deviceOrientation"] = @([self.deviceOrientation integerValue]);
-                self.orientation = nil;
-                self.deviceOrientation = nil;
-
-                if (useFastMode) {
-                    [self onPictureSaved:@{@"data": response, @"id": options[@"id"]}];
-                } else {
-                    resolve(response);
+                // release image resource
+                @try{
+                    CFRelease(destination);
                 }
+                @catch(NSException *exception){
+                    RCTLogError(@"Failed to release CGImageDestinationRef: %@", exception);
+                }
+
             } else {
                 reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be captured", error);
             }
@@ -781,8 +874,8 @@ BOOL _recordRequested = NO;
                [NSError errorWithDomain:@"E_IMAGE_CAPTURE_FAILED" code: 500 userInfo:@{NSLocalizedDescriptionKey:exception.reason}]
         );
     }
-
 }
+
 - (void)recordWithOrientation:(NSDictionary *)options resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject{
     [self.sensorOrientationChecker getDeviceOrientationWithBlock:^(UIInterfaceOrientation orientation) {
         NSMutableDictionary *tmpOptions = [options mutableCopy];
@@ -796,7 +889,7 @@ BOOL _recordRequested = NO;
 }
 - (void)record:(NSDictionary *)options resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    if(self.videoCaptureDeviceInput == nil){
+    if(self.videoCaptureDeviceInput == nil || !self.session.isRunning){
         reject(@"E_VIDEO_CAPTURE_FAILED", @"Camera is not ready.", nil);
         return;
     }
@@ -807,13 +900,13 @@ BOOL _recordRequested = NO;
     }
 
     NSInteger orientation = [options[@"orientation"] integerValue];
-    
+
     // some operations will change our config
     // so we batch config updates, even if inner calls
     // might also call this, only the outermost commit will take effect
     // making the camera changes much faster.
     [self.session beginConfiguration];
-    
+
 
     if (_movieFileOutput == nil) {
         // At the time of writing AVCaptureMovieFileOutput and AVCaptureVideoDataOutput (> GMVDataOutput)
@@ -892,40 +985,39 @@ BOOL _recordRequested = NO;
             }
         }
     }
-    
-    
+
+
     BOOL recordAudio = [options valueForKey:@"mute"] == nil || ([options valueForKey:@"mute"] != nil && ![options[@"mute"] boolValue]);
-        
-    
+
+
     // sound recording connection, we can easily turn it on/off without manipulating inputs, this prevents flickering.
     // note that mute will also be set to true
     // if captureAudio is set to false on the JS side.
     // Check the property anyways just in case it is manipulated
     // with setNativeProps
     if(recordAudio && self.captureAudio){
-                
+
         // if we haven't initialized our capture session yet
         // initialize it. This will cause video to flicker.
-        if(self.audioCaptureDeviceInput == nil){
-            [self initializeAudioCaptureSessionInput];
-        }
-        
+        [self initializeAudioCaptureSessionInput];
+
+
         // finally, make sure we got access to the capture device
         // and turn the connection on.
         if(self.audioCaptureDeviceInput != nil){
             AVCaptureConnection *audioConnection = [self.movieFileOutput connectionWithMediaType:AVMediaTypeAudio];
             audioConnection.enabled = YES;
         }
-        
+
     }
-    
+
     // if we have a capture input but are muted
     // disable connection. No flickering here.
     else if(self.audioCaptureDeviceInput != nil){
         AVCaptureConnection *audioConnection = [self.movieFileOutput connectionWithMediaType:AVMediaTypeAudio];
          audioConnection.enabled = NO;
     }
-        
+
     dispatch_async(self.sessionQueue, ^{
 
         NSString *path = nil;
@@ -942,44 +1034,44 @@ BOOL _recordRequested = NO;
                 [connection setVideoMirrored:YES];
             }
         }
-        
+
         // finally, commit our config changes before starting to record
         [self.session commitConfiguration];
-        
+
         // and update flash in case it was turned off automatically
         // due to session/preset changes
         [self updateFlashMode];
-        
+
         // after everything is set, start recording with a tiny delay
         // to ensure the camera already has focus and exposure set.
         double delayInSeconds = 0.5;
         dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, delayInSeconds * NSEC_PER_SEC);
-        
+
         // we will use this flag to stop recording
         // if it was requested to stop before it could even start
         _recordRequested = YES;
 
         dispatch_after(popTime, self.sessionQueue, ^(void){
-                    
+
             // our session might have stopped in between the timeout
             // so make sure it is still valid, otherwise, error and cleanup
-            if(self.movieFileOutput != nil && self.videoCaptureDeviceInput != nil && self.session.isRunning && _recordRequested){
+            if(self.movieFileOutput != nil && self.videoCaptureDeviceInput != nil && _recordRequested){
                 NSURL *outputURL = [[NSURL alloc] initFileURLWithPath:path];
                 [self.movieFileOutput startRecordingToOutputFileURL:outputURL recordingDelegate:self];
                 self.videoRecordedResolve = resolve;
                 self.videoRecordedReject = reject;
-                
+
             }
             else{
                 reject(@"E_VIDEO_CAPTURE_FAILED", !_recordRequested ? @"Recording request cancelled." : @"Camera is not ready.", nil);
                 [self cleanupCamera];
             }
-            
+
             // reset our flag
             _recordRequested = NO;
         });
 
-        
+
     });
 }
 
@@ -1050,18 +1142,7 @@ BOOL _recordRequested = NO;
         }
         [self setupOrDisableBarcodeScanner];
 
-        __weak RNCamera *weakSelf = self;
-        [self setRuntimeErrorHandlingObserver:
-         [NSNotificationCenter.defaultCenter addObserverForName:AVCaptureSessionRuntimeErrorNotification object:self.session queue:nil usingBlock:^(NSNotification *note) {
-            RNCamera *strongSelf = weakSelf;
-            dispatch_async(strongSelf.sessionQueue, ^{
-                // Manually restarting the session since it must
-                // have been stopped due to an error.
-                [strongSelf.session startRunning];
-                [strongSelf onReady:nil];
-            });
-        }]];
-
+        _sessionInterrupted = NO;
         [self.session startRunning];
         [self onReady:nil];
     });
@@ -1085,6 +1166,7 @@ BOOL _recordRequested = NO;
         [self.previewLayer removeFromSuperlayer];
         [self.session commitConfiguration];
         [self.session stopRunning];
+
         for (AVCaptureInput *input in self.session.inputs) {
             [self.session removeInput:input];
         }
@@ -1092,7 +1174,11 @@ BOOL _recordRequested = NO;
         for (AVCaptureOutput *output in self.session.outputs) {
             [self.session removeOutput:output];
         }
-        
+
+        // cleanup audio input if any, and release
+        // audio session so other apps can continue playback.
+        [self removeAudioCaptureSessionInput];
+
         // clean these up as well since we've removed
         // all inputs and outputs from session
         self.videoCaptureDeviceInput = nil;
@@ -1105,57 +1191,127 @@ BOOL _recordRequested = NO;
 // Note: Ensure this is called within a a session configuration block
 - (void)initializeAudioCaptureSessionInput
 {
-    NSError *error = nil;
-    AVCaptureDevice *audioCaptureDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
-    AVCaptureDeviceInput *audioDeviceInput = [AVCaptureDeviceInput deviceInputWithDevice:audioCaptureDevice error:&error];
+    // only initialize if not initialized already
+    if(self.audioCaptureDeviceInput == nil){
+        NSError *error = nil;
 
-    if (error || audioDeviceInput == nil) {
-        RCTLogWarn(@"%s: %@", __func__, error);
-    }
-    else{
-        if ([self.session canAddInput:audioDeviceInput]) {
-            [self.session addInput:audioDeviceInput];
-            self.audioCaptureDeviceInput = audioDeviceInput;
+        AVCaptureDevice *audioCaptureDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+        AVCaptureDeviceInput *audioDeviceInput = [AVCaptureDeviceInput deviceInputWithDevice:audioCaptureDevice error:&error];
+
+        if (error || audioDeviceInput == nil) {
+            RCTLogWarn(@"%s: %@", __func__, error);
         }
+
         else{
-            RCTLog(@"Cannot add audio input");
+
+            // test if we can activate the device input.
+            // If we fail, means it is already being used
+            BOOL setActive = [[AVAudioSession sharedInstance] setActive:YES error:&error];
+
+            if (!setActive) {
+                RCTLogWarn(@"Audio device could not set active: %s: %@", __func__, error);
+            }
+
+            else if ([self.session canAddInput:audioDeviceInput]) {
+                [self.session addInput:audioDeviceInput];
+                self.audioCaptureDeviceInput = audioDeviceInput;
+
+                // inform that audio has been resumed
+                if(self.onAudioConnected){
+                    self.onAudioConnected(nil);
+                }
+            }
+            else{
+                RCTLog(@"Cannot add audio input");
+            }
+        }
+
+        // if we failed to get the audio device, fire our interrupted event
+        if(self.audioCaptureDeviceInput == nil && self.onAudioInterrupted){
+            self.onAudioInterrupted(nil);
         }
     }
-
-    
-    
 }
+
+
+// Removes audio capture from the session, allowing the session
+// to resume if it was interrupted, and stopping any
+// recording in progress with the appropriate flags.
+- (void)removeAudioCaptureSessionInput
+{
+    if(self.audioCaptureDeviceInput != nil){
+
+        BOOL audioRemoved = NO;
+
+        if ([self.session.inputs containsObject:self.audioCaptureDeviceInput]) {
+
+            if ([self isRecording]) {
+                self.isRecordingInterrupted = YES;
+            }
+
+            [self.session removeInput:self.audioCaptureDeviceInput];
+
+            self.audioCaptureDeviceInput = nil;
+
+            // update flash since it gets reset when
+            // we change the session inputs
+            dispatch_async(self.sessionQueue, ^{
+                [self updateFlashMode];
+            });
+
+            audioRemoved = YES;
+        }
+
+        // Deactivate our audio session so other audio can resume
+        // playing, if any. E.g., background music.
+        NSError *error = nil;
+
+        BOOL setInactive = [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&error];
+
+        if (!setInactive) {
+            RCTLogWarn(@"Audio device could not set inactive: %s: %@", __func__, error);
+        }
+
+        self.audioCaptureDeviceInput = nil;
+
+        // inform that audio was interrupted
+        if(audioRemoved && self.onAudioInterrupted){
+           self.onAudioInterrupted(nil);
+        }
+    }
+}
+
 
 - (void)initializeCaptureSessionInput
 {
-    AVCaptureDevice *captureDevice = [self getDevice];
 
-
-    // if setting a new device is the same we currently have, nothing to do
-    // return.
-    if(self.videoCaptureDeviceInput != nil && captureDevice != nil && [self.videoCaptureDeviceInput.device.uniqueID isEqualToString:captureDevice.uniqueID]){
-        return;
-    }
-
-    // if the device we are setting is also invalid/nil, return
-    if(captureDevice == nil){
-        return;
-    }
-
-    __block UIInterfaceOrientation interfaceOrientation;
-
-    void (^statusBlock)(void) = ^() {
-        interfaceOrientation = [[UIApplication sharedApplication] statusBarOrientation];
-    };
-    if ([NSThread isMainThread]) {
-        statusBlock();
-    } else {
-        dispatch_sync(dispatch_get_main_queue(), statusBlock);
-    }
-
-    AVCaptureVideoOrientation orientation = [RNCameraUtils videoOrientationForInterfaceOrientation:interfaceOrientation];
-    
     dispatch_async(self.sessionQueue, ^{
+
+        // Do all camera initialization in the session queue
+        // to prevent it from
+        AVCaptureDevice *captureDevice = [self getDevice];
+
+        // if setting a new device is the same we currently have, nothing to do
+        // return.
+        if(self.videoCaptureDeviceInput != nil && captureDevice != nil && [self.videoCaptureDeviceInput.device.uniqueID isEqualToString:captureDevice.uniqueID]){
+            return;
+        }
+
+        // if the device we are setting is also invalid/nil, return
+        if(captureDevice == nil){
+            return;
+        }
+
+        // get orientation also in our session queue to prevent
+        // race conditions and also blocking the main thread
+        __block UIInterfaceOrientation interfaceOrientation;
+
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            interfaceOrientation = [[UIApplication sharedApplication] statusBarOrientation];
+        });
+
+        AVCaptureVideoOrientation orientation = [RNCameraUtils videoOrientationForInterfaceOrientation:interfaceOrientation];
+
 
         [self.session beginConfiguration];
 
@@ -1173,13 +1329,14 @@ BOOL _recordRequested = NO;
         }
 
 
-        // setup our capture preset based on what was set from RN
-        // and our defaults
-        // if the preset is not supported (e.g., when switching cameras)
-        // canAddInput below will fail
-        self.session.sessionPreset = [self getDefaultPreset];
+        // Do additional cleanup that might be needed on the
+        // previous device, if any.
+        AVCaptureDevice *previousDevice = self.videoCaptureDeviceInput != nil ? self.videoCaptureDeviceInput.device : nil;
+
+        [self cleanupFocus:previousDevice];
 
 
+        // Remove inputs
         [self.session removeInput:self.videoCaptureDeviceInput];
 
         // clear this variable before setting it again.
@@ -1187,11 +1344,18 @@ BOOL _recordRequested = NO;
         // and we are no longer able to detect if it changed or not
         self.videoCaptureDeviceInput = nil;
 
+        // setup our capture preset based on what was set from RN
+        // and our defaults
+        // if the preset is not supported (e.g., when switching cameras)
+        // canAddInput below will fail
+        self.session.sessionPreset = [self getDefaultPreset];
+
+
         if ([self.session canAddInput:captureDeviceInput]) {
             [self.session addInput:captureDeviceInput];
 
             self.videoCaptureDeviceInput = captureDeviceInput;
-            
+
             // Update all these async after our session has commited
             // since some values might be changed on session commit.
             dispatch_async(self.sessionQueue, ^{
@@ -1203,15 +1367,15 @@ BOOL _recordRequested = NO;
                 [self updateWhiteBalance];
                 [self updateFlashMode];
             });
-            
+
             [self.previewLayer.connection setVideoOrientation:orientation];
             [self _updateMetadataObjectsToRecognize];
         }
         else{
             RCTLog(@"The selected device does not work with the Preset [%@] or configuration provided", self.session.sessionPreset);
         }
-        
-        
+
+
         // if we have not yet set our audio capture device,
         // set it. Setting it early will prevent flickering when
         // recording a video
@@ -1222,7 +1386,7 @@ BOOL _recordRequested = NO;
         // the captureAudio prop by a simple permission check;
         // for example, checking
         // [[AVAudioSession sharedInstance] recordPermission] == AVAudioSessionRecordPermissionGranted
-        if(self.audioCaptureDeviceInput == nil && self.captureAudio){
+        if(self.captureAudio){
             [self initializeAudioCaptureSessionInput];
         }
 
@@ -1262,48 +1426,100 @@ BOOL _recordRequested = NO;
 }
 
 
-- (void)bridgeDidForeground:(NSNotification *)notification
-{
-    // do not run in async queue because we might end up with a race condition
-    // leaving the camera stuck after a resume. Queue is also not needed.
-    if (![self.session isRunning] && [self isSessionPaused]) {
-        self.paused = NO;
-        [self.session startRunning];
-        [self updateFlashMode]; // flash is disabled when session is paused
-    }
-}
-
-- (void)bridgeDidBackground:(NSNotification *)notification
-{
-
-    if ([self isRecording]) {
-        self.isRecordingInterrupted = YES;
-    }
-
-    if ([self.session isRunning] && ![self isSessionPaused]) {
-        self.paused = YES;
-        [self.session stopRunning];
-    }
-
-
-}
-
+// We are using this event to detect audio interruption ended
+// events since we won't receive it on our session
+// after disabling audio.
 - (void)audioDidInterrupted:(NSNotification *)notification
 {
     NSDictionary *userInfo = notification.userInfo;
     NSInteger type = [[userInfo valueForKey:AVAudioSessionInterruptionTypeKey] integerValue];
-    switch (type) {
-        case AVAudioSessionInterruptionTypeBegan:
-            [self bridgeDidBackground: notification];
-            break;
 
-        case AVAudioSessionInterruptionTypeEnded:
-            [self bridgeDidForeground: notification];
-            break;
 
-        default:
-            break;
+    // if our audio interruption ended
+    if(type == AVAudioSessionInterruptionTypeEnded){
+
+        // and the end event contains a hint that we should resume
+        // audio. Then re-connect our audio session if we are
+        // capturing audio.
+        // Sometimes we are hinted to not resume audio; e.g.,
+        // when playing music in background.
+
+        NSInteger option = [[userInfo valueForKey:AVAudioSessionInterruptionOptionKey] integerValue];
+
+        if(self.captureAudio && option == AVAudioSessionInterruptionOptionShouldResume){
+
+            dispatch_async(self.sessionQueue, ^{
+
+                // initialize audio if we need it
+                // check again captureAudio in case it was changed
+                // in between
+                if(self.captureAudio){
+                    [self initializeAudioCaptureSessionInput];
+                }
+            });
+        }
+
     }
+}
+
+
+// session interrupted events
+- (void)sessionWasInterrupted:(NSNotification *)notification
+{
+    // Mark session interruption
+    _sessionInterrupted = YES;
+
+    // Turn on video interrupted if our session is interrupted
+    // for any reason
+    if ([self isRecording]) {
+        self.isRecordingInterrupted = YES;
+    }
+
+    // prevent any video recording start that we might have on the way
+    _recordRequested = NO;
+
+    // get event info and fire RN event if our session was interrupted
+    // due to audio being taken away.
+    NSDictionary *userInfo = notification.userInfo;
+    NSInteger type = [[userInfo valueForKey:AVCaptureSessionInterruptionReasonKey] integerValue];
+
+    if(type == AVCaptureSessionInterruptionReasonAudioDeviceInUseByAnotherClient){
+        // if we have audio, stop it so preview resumes
+        // it will eventually be re-loaded the next time recording
+        // is requested, although it will flicker.
+        dispatch_async(self.sessionQueue, ^{
+            [self removeAudioCaptureSessionInput];
+        });
+            
+    }
+
+}
+
+
+// update flash and our interrupted flag on session resume
+- (void)sessionDidStartRunning:(NSNotification *)notification
+{
+    //NSLog(@"sessionDidStartRunning Was interrupted? %d", _sessionInterrupted);
+
+    if(_sessionInterrupted){
+        // resume flash value since it will be resetted / turned off
+        dispatch_async(self.sessionQueue, ^{
+            [self updateFlashMode];
+        });
+    }
+
+    _sessionInterrupted = NO;
+}
+
+- (void)sessionRuntimeError:(NSNotification *)notification
+{
+    // Manually restarting the session since it must
+    // have been stopped due to an error.
+    dispatch_async(self.sessionQueue, ^{
+         _sessionInterrupted = NO;
+        [self.session startRunning];
+        [self onReady:nil];
+    });
 }
 
 - (void)orientationChanged:(NSNotification *)notification
