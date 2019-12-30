@@ -230,6 +230,12 @@ Values: boolean `true` (default) | `false`
 Specifies if audio recording permissions should be requested.
 Make sure to follow README instructions for audio recording permissions [here](README.md).
 
+### iOS `keepAudioSession`
+
+Values: boolean `true` | `false` (false)
+
+(iOS Only) When the camera is unmounted, it will release any audio session it acquired (if `captureAudio=true`) so other media can continue playing. However, this might not be always desirable (e.g., if video is played afterwards) and can be disabled by setting it to `true`. Setting this to `true`, means your app will not release the audio session. Note: other apps might still "steal" the audio session from your app.
+
 ### `flashMode`
 
 Values: `RNCamera.Constants.FlashMode.off` (default), `RNCamera.Constants.FlashMode.on`, `RNCamera.Constants.FlashMode.auto` or `RNCamera.Constants.FlashMode.torch`.
@@ -363,7 +369,7 @@ Note: This solve the flicker video recording issue for iOS
 
 ### `onCameraReady`
 
-Function to be called when native code emit onCameraReady event, when camera is ready.
+Function to be called when native code emit onCameraReady event, when camera is ready. This event will also fire when changing cameras (by `type` or `cameraId`).
 
 ### `onMountError`
 
@@ -417,18 +423,24 @@ Event contains the following fields
           }
         }
 
-  - onAndroid:
+  - onAndroid: the `ResultPoint[]` (`bounds.origin`) is returned for scanned barcode origins. The number of `ResultPoint` returned depends on the type of Barcode.
 
-        bounds:[{x:string,y:string}]
-        	- on Android it just returns resultPoints:
-        - for barcodes:
+        bounds: {
+          width: number;
+          height: number;
+          origin: Array<{x: number, y: number}>
+        }
 
-              bounds[0].x : left side of barcode.
-              bounds[1].x : right side of barcode
-        - counting for QRcodes:
+        1. **PDF417**: 8 ResultPoint, laid out as follow:
+          0 --- 4 ------ 6 --- 2
+          | ////////////////// |
+          1 --- 5 ------ 7 --- 3
 
-              1 2
-              0
+        2. **QR**: 4 ResultPoint, laid out as follow:
+          2 ------ 3
+          | //////
+          | //////
+          1 ------ 0
 
 The following barcode types can be recognised:
 
@@ -685,6 +697,14 @@ This component supports subviews, so if you wish to use the camera view as a bac
 A Barcode and QR code UI mask which can be use to render a scanning layout on camera with customizable styling.
 
 Read more about [react-native-barcode-mask](https://github.com/shahnawaz/react-native-barcode-mask) here.
+
+### @nartc/react-native-barcode-mask
+
+A rewritten version of `react-native-barcode-mask` using `Hooks` and `Reanimated`. If you're already using `react-native-reanimated` (`react-navigation` dependency) then you might benefit from this rewritten component.
+- Customizable
+- Provide custom hook to "scan barcode within finder area"
+
+Read more about it here [@nartc/react-native-barcode-mask](https://github.com/nartc/react-native-barcode-mask)
 
 ## Testing
 
