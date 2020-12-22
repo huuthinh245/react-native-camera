@@ -26,6 +26,10 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, V
   private int mWidth;
   private int mHeight;
   private int mRotation;
+  private int mCropWidth;
+  private int mCropHeight;
+  private int mCropX;
+  private int mCropY;
   private RNBarcodeDetector mBarcodeDetector;
   private BarcodeDetectorAsyncTaskDelegate mDelegate;
   private double mScaleX;
@@ -47,7 +51,11 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, V
       int viewWidth,
       int viewHeight,
       int viewPaddingLeft,
-      int viewPaddingTop
+      int viewPaddingTop,
+      int cropWidth,
+      int cropHeight,
+      int cropX,
+      int cropY
   ) {
     mImageData = imageData;
     mWidth = width;
@@ -60,6 +68,11 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, V
     mScaleY = 1 / density;
     mPaddingLeft = viewPaddingLeft;
     mPaddingTop = viewPaddingTop;
+    mCropWidth = cropWidth;
+    mCropHeight = cropHeight;
+    mCropX = cropX;
+    mCropY = cropY;
+
   }
 
   @Override
@@ -69,8 +82,8 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, V
     }
 
     final FirebaseVisionImageMetadata metadata = new FirebaseVisionImageMetadata.Builder()
-            .setWidth(mWidth)
-            .setHeight(mHeight)
+            .setWidth(mCropWidth)
+            .setHeight(mCropHeight)
             .setFormat(FirebaseVisionImageMetadata.IMAGE_FORMAT_YV12)
             .setRotation(getFirebaseRotation())
             .build();
@@ -326,29 +339,41 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, V
   }
 
   private WritableMap processBounds(Rect frame) {
-    WritableMap origin = Arguments.createMap();
-    int x = frame.left;
-    int y = frame.top;
+      int cropX = mCropX;
+      int cropY = mCropY;
+      // Crop x/y are relative to landscape mode, we have to invert them for portrait mode
+      if(mRotation == 90 || mRotation == -90) {
+          cropX = mCropY;
+          cropY = mCropX;
+      }
 
-    if (frame.left < mWidth / 2) {
-      x = x + mPaddingLeft / 2;
-    } else if (frame.left > mWidth /2) {
-      x = x - mPaddingLeft / 2;
-    }
+      WritableMap origin = Arguments.createMap();
+      int x = frame.left + cropX;
+      int y = frame.top + cropY;
 
-    y = y + mPaddingTop;
+      if (frame.left < mWidth / 2) {
+          x = x + mPaddingLeft / 2;
+      } else if (frame.left > mWidth /2) {
+          x = x - mPaddingLeft / 2;
+      }
 
-    origin.putDouble("x", x * mScaleX);
-    origin.putDouble("y", y * mScaleY);
+      if (frame.top < mHeight / 2) {
+          y = y + mPaddingTop / 2;
+      } else if (frame.top > mHeight / 2) {
+          y = y - mPaddingTop / 2;
+      }
 
-    WritableMap size = Arguments.createMap();
-    size.putDouble("width", frame.width() * mScaleX);
-    size.putDouble("height", frame.height() * mScaleY);
+      origin.putDouble("x", x * mScaleX);
+      origin.putDouble("y", y * mScaleY);
 
-    WritableMap bounds = Arguments.createMap();
-    bounds.putMap("origin", origin);
-    bounds.putMap("size", size);
-    return bounds;
+      WritableMap size = Arguments.createMap();
+      size.putDouble("width", frame.width() * mScaleX);
+      size.putDouble("height", frame.height() * mScaleY);
+
+      WritableMap bounds = Arguments.createMap();
+      bounds.putMap("origin", origin);
+      bounds.putMap("size", size);
+      return bounds;
   }
 
 }
