@@ -85,7 +85,7 @@ public class BarcodeDetectorAsyncTask extends android.os.AsyncTask<Void, Void, S
       mDelegate.onBarcodeDetectionError(mBarcodeDetector);
     } else {
       if (barcodes.size() > 0) {
-        mDelegate.onBarcodesDetected(serializeEventData(barcodes));
+        mDelegate.onBarcodesDetected(serializeEventData(barcodes), mWidth, mHeight, mImageData);
       }
       mDelegate.onBarcodeDetectingTaskCompleted();
     }
