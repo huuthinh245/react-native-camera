@@ -24,6 +24,8 @@ namespace RNCamera
         public const int CameraAspectFill = 0;
         public const int CameraAspectFit = 1;
         public const int CameraAspectStretch = 2;
+        public const int CameraCaptureModeStill = 0;
+        public const int CameraCaptureModeVideo = 1;
         public const int CameraCaptureTargetMemory = 0;
         public const int CameraCaptureTargetDisk = 1;
         public const int CameraCaptureTargetCameraRoll = 2;
@@ -62,7 +64,7 @@ namespace RNCamera
         {
             get
             {
-                return "RNCameraModule";
+                return "CameraModule";
             }
         }
 
@@ -75,7 +77,8 @@ namespace RNCamera
                     { "Aspect", GetAspectConstants() },
                     { "BarCodeType", GetBarcodeConstants() },
                     { "Type", GetTypeConstants() },
-                    { "VideoQuality", GetCaptureQualityConstants() },
+                    { "CaptureQuality", GetCaptureQualityConstants() },
+                    { "CaptureMode", GetCaptureModeConstants() },
                     { "CaptureTarget", GetCaptureTargetConstants() },
                     { "Orientation", GetOrientationConstants() },
                     { "FlashMode", GetFlashModeConstants() },
@@ -87,26 +90,9 @@ namespace RNCamera
         public CameraForViewManager CameraManager { get; } = new CameraForViewManager();
 
         [ReactMethod]
-        public async void checkMediaCapturePermission(IPromise promise)
+        public async void capture(JObject options, IPromise promise)
         {
-            MediaCapture newCapture = new MediaCapture();
-            try
-            {
-                await newCapture.InitializeAsync();
-            }
-            catch
-            {
-                promise.Resolve(false);
-                return;
-            }
-
-            promise.Resolve(true);
-        }
-
-        [ReactMethod]
-        public async void takePicture(JObject options, int viewTag, IPromise promise)
-        {
-            //var viewTag = options.Value<int>("view");
+            var viewTag = options.Value<int>("view");
             var cameraForView = CameraManager.GetCameraForView(viewTag);
             if (cameraForView == null)
             {
@@ -114,30 +100,24 @@ namespace RNCamera
                 return;
             }
 
-            await CapturePhotoAsync(cameraForView, options, promise).ConfigureAwait(false);
-        }
-
-        [ReactMethod]
-        public void record(JObject options, int viewTag, IPromise promise)
-        {
-            //var viewTag = options.Value<int>("view");
-            var cameraForView = CameraManager.GetCameraForView(viewTag);
-            if (cameraForView == null)
+            var mode = options.Value<int>("mode");
+            if (mode == CameraCaptureModeVideo)
             {
-                promise.Reject("No camera found.");
+                if (_recordingTask != null)
+                {
+                    promise.Reject("Cannot run more than one capture operation.");
+                    return;
+                }
+
+                _recordingCancellation = new CancellationTokenSource();
+                _recordingTask = RecordAsync(cameraForView, options, promise, _recordingCancellation.Token);
                 return;
             }
-
-            if (_recordingTask != null)
+            else
             {
-                promise.Reject("Cannot run more than one capture operation.");
-                return;
+                await CapturePhotoAsync(cameraForView, options, promise).ConfigureAwait(false);
             }
-
-            _recordingCancellation = new CancellationTokenSource();
-            _recordingTask = RecordAsync(cameraForView, options, promise, _recordingCancellation.Token);
         }
-
 
         [ReactMethod]
         public async void stopCapture(IPromise promise)
@@ -435,6 +415,15 @@ namespace RNCamera
                 { "high", CameraCaptureQualityHigh },
                 { "720p", CameraCaptureQuality720p },
                 { "1080p", CameraCaptureQuality1080p },
+            };
+        }
+
+        private static IReadOnlyDictionary<string, object> GetCaptureModeConstants()
+        {
+            return new Dictionary<string, object>
+            {
+                { "still", CameraCaptureModeStill },
+                { "video", CameraCaptureModeVideo },
             };
         }
 

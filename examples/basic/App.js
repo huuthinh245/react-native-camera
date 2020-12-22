@@ -131,15 +131,15 @@ export default class CameraScreen extends React.Component {
     }
   };
 
-  takeVideo = async () => {
-    const { isRecording } = this.state;
-    if (this.camera && !isRecording) {
+  takeVideo = async function() {
+    if (this.camera) {
       try {
         const promise = this.camera.recordAsync(this.state.recordOptions);
 
         if (promise) {
           this.setState({ isRecording: true });
           const data = await promise;
+          this.setState({ isRecording: false });
           console.warn('takeVideo', data);
         }
       } catch (e) {
@@ -271,41 +271,6 @@ export default class CameraScreen extends React.Component {
     </React.Fragment>
   );
 
-  renderRecording = () => {
-    const { isRecording } = this.state;
-    const backgroundColor = isRecording ? 'white' : 'darkred';
-    const action = isRecording ? this.stopVideo : this.takeVideo;
-    const button = isRecording ? this.renderStopRecBtn() : this.renderRecBtn();
-    return (
-      <TouchableOpacity
-        style={[
-          styles.flipButton,
-          {
-            flex: 0.3,
-            alignSelf: 'flex-end',
-            backgroundColor,
-          },
-        ]}
-        onPress={() => action()}
-      >
-        {button}
-      </TouchableOpacity>
-    );
-  };
-
-  stopVideo = async () => {
-    await this.camera.stopRecording();
-    this.setState({ isRecording: false });
-  };
-
-  renderRecBtn() {
-    return <Text style={styles.flipText}> REC </Text>;
-  }
-
-  renderStopRecBtn() {
-    return <Text style={styles.flipText}> ☕ </Text>;
-  }
-
   renderCamera() {
     const { canDetectFaces, canDetectText, canDetectBarcode } = this.state;
 
@@ -425,7 +390,23 @@ export default class CameraScreen extends React.Component {
               alignSelf: 'flex-end',
             }}
           >
-            {this.renderRecording()}
+            <TouchableOpacity
+              style={[
+                styles.flipButton,
+                {
+                  flex: 0.3,
+                  alignSelf: 'flex-end',
+                  backgroundColor: this.state.isRecording ? 'white' : 'darkred',
+                },
+              ]}
+              onPress={this.state.isRecording ? () => {} : this.takeVideo.bind(this)}
+            >
+              {this.state.isRecording ? (
+                <Text style={styles.flipText}> ☕ </Text>
+              ) : (
+                <Text style={styles.flipText}> REC </Text>
+              )}
+            </TouchableOpacity>
           </View>
           {this.state.zoom !== 0 && (
             <Text style={[styles.flipText, styles.zoomText]}>Zoom: {this.state.zoom}</Text>

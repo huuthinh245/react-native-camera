@@ -8,7 +8,6 @@
 #import "TextDetectorManager.h"
 
 @class RNCamera;
-@class RNCustomWhiteBalanceSettings;
 
 @interface RNCamera : UIView <AVCaptureMetadataOutputObjectsDelegate,
                               AVCaptureFileOutputRecordingDelegate,
@@ -27,7 +26,6 @@
 @property(nonatomic, strong) NSArray *barCodeTypes;
 @property(nonatomic, strong) NSArray *googleVisionBarcodeTypes;
 
-@property(nonatomic, assign) NSInteger *googleVisionBarcodeMode;
 @property(nonatomic, assign) NSInteger presetCamera;
 @property(nonatomic, copy) NSString *cameraId; // copy required for strings/pointers
 @property(assign, nonatomic) NSInteger flashMode;
@@ -37,7 +35,6 @@
 @property(copy, nonatomic) NSDictionary *autoFocusPointOfInterest;
 @property(assign, nonatomic) float focusDepth;
 @property(assign, nonatomic) NSInteger whiteBalance;
-@property(nonatomic, strong) RNCustomWhiteBalanceSettings *customWhiteBalanceSettings;
 @property(assign, nonatomic) float exposure;
 @property(assign, nonatomic) float exposureIsoMin;
 @property(assign, nonatomic) float exposureIsoMax;
@@ -50,8 +47,6 @@
 @property(nonatomic, assign) BOOL canDetectBarcodes;
 @property(nonatomic, assign) BOOL captureAudio;
 @property(nonatomic, assign) BOOL keepAudioSession;
-@property(nonatomic, assign) BOOL useNativeZoom;
-
 @property(nonatomic, assign) CGRect rectOfInterest;
 @property(assign, nonatomic) AVVideoCodecType videoCodecType;
 @property(assign, nonatomic)
@@ -79,7 +74,6 @@
 - (void)updateRectOfInterest;
 // google Barcode props
 - (void)updateGoogleVisionBarcodeType:(id)requestedTypes;
-- (void)updateGoogleVisionBarcodeMode:(id)requestedMode;
 
 - (void)takePicture:(NSDictionary *)options
             resolve:(RCTPromiseResolveBlock)resolve
@@ -96,7 +90,6 @@
 - (void)stopRecording;
 - (void)resumePreview;
 - (void)pausePreview;
-- (void)setupOrDisablePinchZoom;
 - (void)setupOrDisableBarcodeScanner;
 - (void)setupOrDisableTextDetector;
 - (void)setupOrDisableFaceDetector;
@@ -110,7 +103,6 @@
 - (void)onRecordingStart:(NSDictionary *)event;
 - (void)onRecordingEnd:(NSDictionary *)event;
 - (void)onText:(NSDictionary *)event;
-- (void)onTouch:(NSDictionary *)event;
 - (void)onBarcodesDetected:(NSDictionary *)event;
 - (bool)isRecording;
 - (void)onSubjectAreaChanged:(NSDictionary *)event;

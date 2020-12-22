@@ -1,9 +1,7 @@
 package org.reactnative.camera.events;
 
-import android.util.Base64;
-
 import androidx.core.util.Pools;
-
+import android.util.SparseArray;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
@@ -17,30 +15,28 @@ public class BarcodesDetectedEvent extends Event<BarcodesDetectedEvent> {
       new Pools.SynchronizedPool<>(3);
 
   private WritableArray mBarcodes;
-  private byte[] mCompressedImage;
 
   private BarcodesDetectedEvent() {
   }
 
   public static BarcodesDetectedEvent obtain(
-          int viewTag,
-          WritableArray barcodes,
-          byte[] compressedImage) {
+      int viewTag,
+      WritableArray barcodes
+  ) {
     BarcodesDetectedEvent event = EVENTS_POOL.acquire();
     if (event == null) {
       event = new BarcodesDetectedEvent();
     }
-    event.init(viewTag, barcodes, compressedImage);
+    event.init(viewTag, barcodes);
     return event;
   }
 
   private void init(
-          int viewTag,
-          WritableArray barcodes,
-          byte[] compressedImage) {
+      int viewTag,
+      WritableArray barcodes
+  ) {
     super.init(viewTag);
     mBarcodes = barcodes;
-    mCompressedImage = compressedImage;
   }
 
   /**
@@ -72,9 +68,6 @@ public class BarcodesDetectedEvent extends Event<BarcodesDetectedEvent> {
     event.putString("type", "barcode");
     event.putArray("barcodes", mBarcodes);
     event.putInt("target", getViewTag());
-    if (mCompressedImage != null) {
-      event.putString("image", Base64.encodeToString(mCompressedImage, Base64.NO_WRAP));
-    }
     return event;
   }
 }

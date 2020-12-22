@@ -9,7 +9,6 @@ import {
   AppState,
   TouchableOpacity
 } from 'react-native';
-import Slider from '@react-native-community/slider';
 import _ from 'underscore';
 import { Container, Button, Text, Icon, Footer, FooterTab, Spinner, H2, connectStyle, Toast } from 'native-base';
 import { RNCamera } from 'react-native-camera';
@@ -51,17 +50,8 @@ const WB_OPTIONS_MAP = {
   2: "CL",
   3: "SH",
   4: "IN",
-  5: "FL",
-  6: "CW"
+  5: "FL"
 }
-
-const CUSTOM_WB_OPTIONS_MAP = {
-  temperature:      {label: "Temp.", min: 1000, max: 10000, steps: 500},
-  tint:             {label: "Tint", min: -20, max: 20, steps: 0.5},
-  redGainOffset:    {label: "Red", min: -1.0, max: 1.0, steps: 0.05},
-  greenGainOffset:  {label: "Green", min: -1.0, max: 1.0, steps: 0.05},
-  blueGainOffset:   {label: "Blue", min: -1.0, max: 1.0, steps: 0.05},
-};
 
 const getCameraType = (type) => {
 
@@ -105,7 +95,6 @@ const styles = StyleSheet.create({
 
   buttonsView: {
     flex: 1,
-    backgroundColor: 'black',
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
@@ -122,31 +111,6 @@ const styles = StyleSheet.create({
   ratioButton: {
     width: 100 * conf.theme.variables.sizeScaling
   },
-
-  customWBView: {
-    backgroundColor: '#00000080',
-    flex: 1,
-    width: '100%',
-    height: 50,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-  },
-
-  customWBViewButton: {
-    backgroundColor: 'transparent',
-    alignSelf: 'center',
-    width: '25%',
-  },
-
-  customWBViewText: {
-    color: 'white',
-  },
-
-  customWBViewSlider: {
-    flex: 2,
-    marginRight: 6,
-  },
 })
 
 
@@ -156,16 +120,8 @@ const defaultCameraOptions = {
   flashMode: 'off', // on, auto, off, torch
   wb: 0,
   zoom: 0, // 0-1
-  focusCoords: undefined,
-  currentCustomWBOption: "temperature",
-  customWhiteBalance: {
-    temperature: 6000,
-    tint: 0.0,
-    redGainOffset: 0.0,
-    greenGainOffset: 0.0,
-    blueGainOffset: 0.0,
-  },
-};
+  focusCoords: undefined
+}
 
 function parseRatio(str){
   let [p1, p2] = str.split(":");
@@ -441,46 +397,46 @@ class Camera extends Component{
     }
   }
 
-  onTapToFocus = (touchOrigin) => {
+  onTapToFocus = (event) => {
 
     if(!this.cameraStyle || this.state.takingPic){
       return;
     }
 
-    const {x, y} = touchOrigin;
+    const {pageX, pageY} = event.nativeEvent;
     let {width, height, top, left} = this.cameraStyle;
 
     // compensate for top/left changes
-    let pageX2 = x - left;
-    let pageY2 = y - top;
+    let pageX2 = pageX - left;
+    let pageY2 = pageY - top;
 
     // normalize coords as described by https://gist.github.com/Craigtut/6632a9ac7cfff55e74fb561862bc4edb
     const x0 = pageX2 / width;
     const y0 = pageY2 / height;
 
-    let computedX = x0;
-    let computedY = y0;
+    let x = x0;
+    let y = y0;
 
     // if portrait, need to apply a transform because RNCamera always measures coords in landscape mode
     // with the home button on the right. If the phone is rotated with the home button to the left
     // we will have issues here, and we have no way to detect that orientation!
     // TODO: Fix this, however, that orientation should never be used due to camera positon
     if(this.state.orientation.isPortrait){
-      computedX = y0;
-      computedY = -x0 + 1;
+      x = y0;
+      y = -x0 + 1;
     }
 
     this.setState({
       focusCoords: {
-        x: computedX,
-        y: computedY,
+        x: x,
+        y: y,
         autoExposure: true
       },
       touchCoords: {
         x: pageX2 - 50,
         y: pageY2 - 50
       }
-    },this.onSetFocus);
+    });
 
     // remove focus rectangle
     if(this.focusTimeout){
@@ -490,12 +446,14 @@ class Camera extends Component{
 
   }
 
-  onSetFocus = () => {
-      this.focusTimeout = setTimeout(() => {
-        if (this.mounted) {
+  onTapToFocusOut = () => {
+    if(this.state.touchCoords){
+      this.focusTimeout = setTimeout(()=>{
+        if(this.mounted){
           this.setState({touchCoords: null});
         }
       }, 1500);
+    }
   }
 
   onPinchStart = () => {
@@ -645,12 +603,6 @@ class Camera extends Component{
 
     this.cameraStyle = cameraStyle;
 
-    let isCustomWhiteBalance = wb >= WB_OPTIONS.length;
-    let whiteBalance = isCustomWhiteBalance ? this.state.customWhiteBalance : WB_OPTIONS[wb];
-    const { currentCustomWBOption } = this.state;
-    let customWhiteBalanceValue = this.state.customWhiteBalance[currentCustomWBOption];
-    let customWhiteBalanceOption = CUSTOM_WB_OPTIONS_MAP[currentCustomWBOption]
-
     return (
 
       <Container fullBlack>
@@ -686,9 +638,7 @@ class Camera extends Component{
               flashMode={flashMode}
               zoom={zoom}
               maxZoom={MAX_ZOOM}
-              useNativeZoom={true}
-              onTap={this.onTapToFocus}
-              whiteBalance={whiteBalance}
+              whiteBalance={WB_OPTIONS[wb]}
               autoFocusPointOfInterest={this.state.focusCoords}
               androidCameraPermissionOptions={{
                 title: 'Permission to use camera',
@@ -716,6 +666,21 @@ class Camera extends Component{
                 </View>
               }
             >
+              <TouchableOpacity
+                activeOpacity={0.5}
+                style={flex1}
+                onPressIn={this.onTapToFocus}
+                onPressOut={this.onTapToFocusOut}
+                onLongPress={this.takePictureLong}
+                delayLongPress={1500}
+              >
+                <ZoomView
+                  onPinchProgress={this.onPinchProgress}
+                  onPinchStart={this.onPinchStart}
+                  onPinchEnd={this.onPinchEnd}
+                  style={flex1}
+                >
+
                   {this.state.touchCoords ?
                     <View style={{
                       borderWidth: 2,
@@ -728,6 +693,8 @@ class Camera extends Component{
                     }}>
                     </View>
                   : null}
+                </ZoomView>
+              </TouchableOpacity>
             </RNCamera>
 
             {!takingPic && !recording && !this.state.spinnerVisible && cameraReady ?
@@ -751,28 +718,6 @@ class Camera extends Component{
                       />
                     </View>
                   : null}
-                  {isCustomWhiteBalance && (
-                    <View style={styles.customWBView}>
-                      <Button style={styles.customWBViewButton} onPress={this.changeCustomWBOption}>
-                        <Text style={styles.customWBViewText}>
-                          {customWhiteBalanceOption.label}
-                        </Text>
-                      </Button>
-                      <Slider
-                        style={styles.customWBViewSlider}
-                        value={customWhiteBalanceValue}
-                        step={customWhiteBalanceOption.steps}
-                        minimumValue={customWhiteBalanceOption.min}
-                        maximumValue={customWhiteBalanceOption.max}
-                        minimumTrackTintColor="#FFFFFF"
-                        maximumTrackTintColor="#000000"
-                        onValueChange={this.changeCustomWBOptionValue}
-                      />
-                      <Text style={[styles.customWBViewText, {minWidth: '15%'}]}>
-                        {customWhiteBalanceValue.toFixed(1)}
-                      </Text>
-                    </View>
-                  )}
                   <View style={styles.buttonsView}>
                     <Button
                       transparent
@@ -949,29 +894,9 @@ class Camera extends Component{
 
 
   changeWB = () => {
-    // The custom white balance feature is only available on iOS (#2774)
-    const numberOfOptions = IS_IOS ? Object.keys(WB_OPTIONS_MAP).length : WB_OPTIONS.length;
     this.setState({
-      wb: (this.state.wb + 1) % numberOfOptions
-    });
-  }
-
-  changeCustomWBOption = () => {
-    const optionKeys = Object.keys(CUSTOM_WB_OPTIONS_MAP);
-    let currentOptionIndex = optionKeys.indexOf(this.state.currentCustomWBOption);
-    let nextOptionIndex = (currentOptionIndex + 1) % optionKeys.length;
-    this.setState({
-      currentCustomWBOption: optionKeys[nextOptionIndex]
-    });
-  }
-
-  changeCustomWBOptionValue = (value) => {
-    this.setState((state) => ({
-      customWhiteBalance: {
-        ...state.customWhiteBalance,
-        [state.currentCustomWBOption]: value,
-      },
-    }));
+      wb: (this.state.wb + 1) % WB_OPTIONS.length
+    })
   }
 
   toggleRatio = () => {
